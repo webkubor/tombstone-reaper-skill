@@ -14,6 +14,28 @@ for arg in "$@"; do
     --apply|--bury) MODE="apply" ;;
     --dry-run|--check) MODE="dry-run" ;;
     --share) SHARE_CARD=1 ;;
+    --stats|--ledger)
+      LEDGER="$HOME/.tombstone-ledger.json"
+      echo "=================================================="
+      echo "📜 🪦 Tombstone Reaper 累计功德账本 (Global Ledger)"
+      echo "=================================================="
+      if [ -f "$LEDGER" ]; then
+        python3 -c "
+import json, os
+d = json.load(open('$LEDGER'))
+print(f'  ⚰️  累计超度墓碑技能: {d.get(\"total_skills\", 0)} 个')
+print(f'  📄 累计清理草稿碎片: {d.get(\"total_drafts\", 0)} 份')
+print(f'  🗑️  累计粉碎幽灵垃圾: {d.get(\"total_garbage\", 0)} 个')
+print(f'  🧠 累计释放上下文: ~{d.get(\"total_tokens\", 0):,} Tokens')
+print('--------------------------------------------------')
+print(f'最近一次入土: {d.get(\"last_project\", \"无\")} ({d.get(\"last_burial_time\", \"无\")})')
+"
+      else
+        echo "  尚无入土记录。运行 ./scripts/reap.sh --bury 开启第一笔功德！"
+      fi
+      echo "=================================================="
+      exit 0
+      ;;
     *) if [ -d "$arg" ]; then TARGET_DIR="$arg"; fi ;;
   esac
 done
