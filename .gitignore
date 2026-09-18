@@ -1,5 +1,10 @@
 .DS_Store
 *.bak
+*.bak2
 *.tmp
+*.orig
+*.update.lock
+*~
 *.log
+archive/
 .tombstone-ledger.json
