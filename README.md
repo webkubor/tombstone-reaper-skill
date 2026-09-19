@@ -10,6 +10,10 @@
   <a href="https://github.com/webkubor/tombstone-reaper-skill"><img src="https://img.shields.io/badge/Philosophy-Subtractive%20First-orange?style=for-the-badge" alt="Philosophy"></a>
 </p>
 
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/webkubor/picx-images-hosting@master/tombstone-reaper/burial-certificate.png/%E6%88%AA%E5%B1%8F2026-09-19%2012.13.08.png" alt="Tombstone Reaper Cyberpunk Terminal UI" width="680" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,255,170,0.15);">
+</p>
+
 ---
 
 ## 🏆 为什么需要 Tombstone Reaper？ (Why This Table)
@@ -29,7 +33,7 @@
 
 ## 📜 晒出你的减法战报 (Bragging & Certificate)
 
-每次执行入土清理，自动生成可一键复制到 GitHub PR 或社交媒体的**入土功德战报**：
+每次执行入土清理，终端自动渲染高饱和度的**赛博朋克入土战报卡片**与一键复制 Markdown：
 
 ```markdown
 ==================================================
