@@ -147,6 +147,139 @@ format_size() {
   fi
 }
 
+render_cyberpunk_card() {
+  local is_preview="$1"
+  CARD_IS_PREVIEW="$is_preview" \
+  CARD_SKILLS="$freed_skills_count" \
+  CARD_AI="$freed_ai_count" \
+  CARD_DRAFTS="$freed_drafts_count" \
+  CARD_GARBAGE="$freed_garbage_count" \
+  CARD_WORKTREES="${#wt_reap_targets[@]}" \
+  CARD_ENABLE_CACHE="$ENABLE_CACHE" \
+  CARD_CACHE_B="$freed_cache_bytes" \
+  CARD_ENABLE_SYS_CACHE="$ENABLE_SYSTEM_CACHE" \
+  CARD_SYS_CACHE_B="$system_cache_freed_bytes" \
+  CARD_TOKENS="$est_tokens" \
+  CARD_TOTAL_B="$grand_total_bytes" \
+  python3 <<'PYEOF'
+import os, sys, re, unicodedata
+
+is_preview = os.environ.get("CARD_IS_PREVIEW", "0") == "1"
+skills = int(os.environ.get("CARD_SKILLS", "0"))
+ai = int(os.environ.get("CARD_AI", "0"))
+drafts = int(os.environ.get("CARD_DRAFTS", "0"))
+garbage = int(os.environ.get("CARD_GARBAGE", "0"))
+worktrees = int(os.environ.get("CARD_WORKTREES", "0"))
+enable_cache = os.environ.get("CARD_ENABLE_CACHE", "0") == "1"
+cache_b = int(os.environ.get("CARD_CACHE_B", "0"))
+enable_sys_cache = os.environ.get("CARD_ENABLE_SYS_CACHE", "0") == "1"
+sys_cache_b = int(os.environ.get("CARD_SYS_CACHE_B", "0"))
+tokens = int(os.environ.get("CARD_TOKENS", "0"))
+total_b = int(os.environ.get("CARD_TOTAL_B", "0"))
+
+no_color = "NO_COLOR" in os.environ
+c_border = '' if no_color else '\033[38;5;48m'
+c_title = '' if no_color else '\033[1;38;5;51m'
+c_sub = '' if no_color else '\033[38;5;49m'
+c_reset = '' if no_color else '\033[0m'
+c_neon = '' if no_color else '\033[1;38;5;82m'
+c_dim = '' if no_color else '\033[38;5;242m'
+c_white = '' if no_color else '\033[1;37m'
+c_quote = '' if no_color else '\033[38;5;158m'
+c_box = '' if no_color else '\033[38;5;39m'
+
+def visible_width(s):
+    clean = re.sub(r'\033\[[0-9;]*m', '', s)
+    w = 0
+    for ch in clean:
+        ea = unicodedata.east_asian_width(ch)
+        if ea in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def pad_row(content, total_width=60):
+    vw = visible_width(content)
+    pad = total_width - vw
+    if pad < 0: pad = 0
+    return content + (' ' * pad)
+
+def fmt_size(b):
+    if b >= 1073741824: return f"{b/1073741824:.2f} GB"
+    if b >= 1048576: return f"{b/1048576:.1f} MB"
+    if b >= 1024: return f"{b/1024:.0f} KB"
+    return f"{b} B"
+
+w = 60
+tag = " (Burial Certificate 预览)" if is_preview else " (Burial Certificate)"
+
+print(f"{c_border}╭" + "─" * (w + 2) + f"╮{c_reset}")
+t_str = f"  🪦  {c_title}T O M B S T O N E   R E A P E R{c_reset}"
+print(f"{c_border}│{c_reset} " + pad_row(t_str, w) + f" {c_border}│{c_reset}")
+sub_str = f"      {c_sub}>> 入 土 功 德 战 报{tag} <<{c_reset}"
+print(f"{c_border}│{c_reset} " + pad_row(sub_str, w) + f" {c_border}│{c_reset}")
+print(f"{c_border}├" + "─" * (w + 2) + f"┤{c_reset}")
+
+def fmt_count(val, unit, tag_txt):
+    if val > 0:
+        return f"{c_neon}+{val} {unit}{c_reset}        {c_dim}[{tag_txt}]{c_reset}"
+    return f"{c_dim} 0 {unit}{c_reset}        {c_dim}[{tag_txt}]{c_reset}"
+
+rows = [
+    f"  ⚰️   超度墓碑技能  {c_border}│{c_reset}  " + fmt_count(skills, "个", "SKILL.md 归档"),
+    f"  🤖  粉碎 AI 碎片  {c_border}│{c_reset}  " + fmt_count(ai, "份", "*.rej / scratch"),
+    f"  📄  清理草稿碎片  {c_border}│{c_reset}  " + fmt_count(drafts, "份", "无用碎片清除"),
+    f"  🗑️   粉碎幽灵垃圾  {c_border}│{c_reset}  " + fmt_count(garbage, "个", "*.bak / *.tmp 清零"),
+    f"  🌳  解绑孤立分支  {c_border}│{c_reset}  " + fmt_count(worktrees, "个", "Worktree 干净"),
+]
+if enable_cache:
+    rows.append(f"  ⚡  清除项目缓存  {c_border}│{c_reset}  " + (f"{c_neon}+{fmt_size(cache_b)}{c_reset}        {c_dim}[构建产物蒸发]{c_reset}" if cache_b > 0 else f"{c_dim} 0 B{c_reset}        {c_dim}[构建干净]{c_reset}"))
+if enable_sys_cache:
+    rows.append(f"  🧹  系统依赖纯缓  {c_border}│{c_reset}  " + (f"{c_neon}+{fmt_size(sys_cache_b)}{c_reset}        {c_dim}[全局依赖清爽]{c_reset}" if sys_cache_b > 0 else f"{c_dim} 0 B{c_reset}        {c_dim}[无冗余包]{c_reset}"))
+
+for r in rows:
+    print(f"{c_border}│{c_reset} " + pad_row(r, w) + f" {c_border}│{c_reset}")
+
+print(f"{c_border}├" + "─" * (w + 2) + f"┤{c_reset}")
+tok_str = f"{c_neon}+{tokens:,} Tokens{c_reset}  {c_dim}(Agent 记忆负熵减负){c_reset}" if tokens > 0 else f"{c_dim}0 Tokens{c_reset}"
+summary_tok = f"  🧠  {c_white}释放上下文{c_reset}    {c_border}│{c_reset}  {tok_str}"
+print(f"{c_border}│{c_reset} " + pad_row(summary_tok, w) + f" {c_border}│{c_reset}")
+
+d_str = f"{c_neon}+{fmt_size(total_b)}{c_reset}          {c_dim}(物理空间极速回血){c_reset}" if total_b > 0 else f"{c_dim}0 B{c_reset}"
+summary_disk = f"  📦  {c_white}缩减磁盘占用{c_reset}  {c_border}│{c_reset}  {d_str}"
+print(f"{c_border}│{c_reset} " + pad_row(summary_disk, w) + f" {c_border}│{c_reset}")
+
+print(f"{c_border}├" + "─" * (w + 2) + f"┤{c_reset}")
+quote = f"  💬  {c_quote}“版本控制是代码的永生之地，工作区不是历史陈列馆”{c_reset}"
+print(f"{c_border}│{c_reset} " + pad_row(quote, w) + f" {c_border}│{c_reset}")
+print(f"{c_border}╰" + "─" * (w + 2) + f"╯{c_reset}")
+
+# 晒单区
+box_w = 60
+print()
+header_box = "┌─ 📢 一键晒单 Markdown (点击复制发 X / PR) "
+header_pad = box_w - visible_width(header_box)
+if header_pad < 0: header_pad = 0
+print(f"{c_box}{header_box}" + "─" * header_pad + f"┐{c_reset}")
+print(f"{c_box}│{c_reset}" + " " * (box_w + 1) + f"{c_box}│{c_reset}")
+
+md_lines = [
+    f"  > 🪦 **Tombstone Reaper 减法战报**",
+    f"  > ───────────────────────────────────",
+    f"  > ⚰️ 超度墓碑: **{skills}** | 🤖 AI碎片: **{ai}** | 🗑️ 垃圾: **{garbage}**",
+    f"  > 🧠 释放记忆: **+{tokens:,} Tokens** (负熵减负!)",
+    f"  > 📦 空间回血: **+{fmt_size(total_b)}**",
+    f"  > *\"立了墓碑不叫下线，入土为安才叫下线。\"*",
+]
+for ml in md_lines:
+    print(f"{c_box}│{c_reset} " + pad_row(f"{c_white}{ml}{c_reset}", box_w - 1) + f"{c_box}│{c_reset}")
+
+print(f"{c_box}│{c_reset}" + " " * (box_w + 1) + f"{c_box}│{c_reset}")
+print(f"{c_box}└" + "─" * (box_w + 1) + f"┘{c_reset}")
+PYEOF
+}
+
 # 工具：把 find 的相对路径解析成绝对路径 + 计算该 skill 单元大小
 declare -A _seen_skill_dirs
 
@@ -394,32 +527,7 @@ fi
 
 if [ "$MODE" = "dry-run" ]; then
   if [ "$SHARE_MODE" -eq 1 ]; then
-    cat <<EOF
-==================================================
-📜 🪦 墓碑收割·入土功德战报 (Burial Certificate 预览)
-==================================================
-  ⚰️  预估超度墓碑技能: $freed_skills_count 个
-  🤖 预估粉碎 AI 碎片: $freed_ai_count 个
-  📄 预估清理草稿碎片: $freed_drafts_count 份
-  🗑️  预估粉碎幽灵垃圾: $freed_garbage_count 个文件
-  🌳 预估清理孤立工作树: ${#wt_reap_targets[@]} 个
-EOF
-    [ "$ENABLE_CACHE" -eq 1 ] && echo "  ⚡ 预估清除项目缓存: $(format_size "$freed_cache_bytes")"
-    [ "$ENABLE_SYSTEM_CACHE" -eq 1 ] && echo "  🧹 预估清理系统缓存: $(format_size "$system_cache_freed_bytes")"
-    cat <<EOF
-  🧠 预估释放上下文记忆: ~$est_tokens Tokens
-  📦 预估缩减磁盘空间: ~$(format_size "$grand_total_bytes")
---------------------------------------------------
-💬 悼词: 版本控制（Git）是它们的永生之地，工作区不是历史陈列馆。
-==================================================
-
-📢 [一键晒单 Markdown 文本（预览），可直接粘贴至 PR 或社交媒体] :
-
-> 🪦 **Tombstone Reaper 减法战报 (预览)**
-> 本次将超度 **$freed_skills_count** 个墓碑技能、**$freed_ai_count** 个 AI 碎片、**$freed_drafts_count** 份死文档、粉碎 **$freed_garbage_count** 个垃圾文件！
-> 🧠 预计为 AI Agent 释放 **~$est_tokens** 个上下文 Token，缩减磁盘占用 **~$(format_size "$grand_total_bytes")**！
-> *"立了墓碑不叫下线，入土为安才叫下线。"*
-EOF
+    render_cyberpunk_card 1
   else
     echo "💡 预估收益: 缩减磁盘约 $(format_size "$grand_total_bytes") / 释放约 $est_tokens 潜在上下文 Token"
     echo "💡 执行入土: 运行 $0 --bury"
@@ -529,51 +637,4 @@ if [ "$ledger_ok" -eq 0 ]; then
 fi
 
 # ===== 入土功德战报（bury card） =====
-if [ "$SHARE_MODE" -eq 1 ]; then
-  cat <<EOF
-==================================================
-📜 🪦 墓碑收割·入土功德战报 (Burial Certificate)
-==================================================
-  ⚰️  超度墓碑技能: $freed_skills_count 个
-  🤖 粉碎 AI 碎片: $freed_ai_count 个
-  📄 清理草稿碎片: $freed_drafts_count 份
-  🗑️  粉碎幽灵垃圾: $freed_garbage_count 个文件
-  🌳 清理孤立工作树: ${#wt_reap_targets[@]} 个
-EOF
-  [ "$ENABLE_CACHE" -eq 1 ] && echo "  ⚡ 清除项目构建缓存: $(format_size "$freed_cache_bytes")"
-  [ "$ENABLE_SYSTEM_CACHE" -eq 1 ] && echo "  🧹 清理系统依赖纯缓存: $(format_size "$system_cache_freed_bytes")"
-  cat <<EOF
-  🧠 释放上下文记忆: ~$est_tokens Tokens
-  📦 缩减磁盘空间: ~$(format_size "$grand_total_bytes")
---------------------------------------------------
-💬 悼词: 版本控制（Git）是它们的永生之地，工作区不是历史陈列馆。
-==================================================
-EOF
-else
-  echo ""
-  echo "=================================================="
-  echo "📜 🪦 墓碑收割·入土功德战报 (Burial Certificate)"
-  echo "=================================================="
-  echo "  ⚰️  超度墓碑技能: $freed_skills_count 个"
-  echo "  🤖 粉碎 AI 碎片: $freed_ai_count 个"
-  echo "  📄 清理草稿碎片: $freed_drafts_count 份"
-  echo "  🗑️  粉碎幽灵垃圾: $freed_garbage_count 个文件"
-  echo "  🌳 清理孤立工作树: ${#wt_reap_targets[@]} 个"
-  [ "$ENABLE_CACHE" -eq 1 ] && echo "  ⚡ 清除项目构建缓存: $(format_size "$freed_cache_bytes")"
-  [ "$ENABLE_SYSTEM_CACHE" -eq 1 ] && echo "  🧹 清理系统依赖纯缓存: $(format_size "$system_cache_freed_bytes")"
-  echo "  🧠 释放上下文记忆: ~$est_tokens Tokens"
-  echo "  📦 缩减磁盘空间: ~$(format_size "$grand_total_bytes")"
-  echo "--------------------------------------------------"
-  echo "💬 悼词: 版本控制（Git）是它们的永生之地，工作区不是历史陈列馆。"
-  echo "=================================================="
-fi
-
-# 一键晒单 Markdown
-echo ""
-echo "📢 [一键晒单 Markdown 文本，可直接粘贴至 PR 或社交媒体] :"
-echo ""
-echo "> 🪦 **Tombstone Reaper 减法战报**"
-echo "> 本次入土仪式已成功超度 **$freed_skills_count** 个墓碑技能、**$freed_ai_count** 个 AI 幽灵碎片、**$freed_drafts_count** 份死文档、粉碎 **$freed_garbage_count** 个垃圾文件！"
-echo "> 🧠 累计为 AI Agent 释放 **~$est_tokens** 个上下文 Token，缩减磁盘占用 **~$(format_size "$grand_total_bytes")**！"
-echo "> *\"立了墓碑不叫下线，入土为安才叫下线。\"*"
-echo ""
+render_cyberpunk_card 0
