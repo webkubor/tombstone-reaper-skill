@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # reap.sh — Tombstone Reaper 墓碑收割引擎
-# 专门清缴代码库里的墓碑文件、自称已废弃的技能、临时备份与幽灵资产。
+# 专门清缴代码库里的墓碑文件、自称已废弃的技能、AI 幽灵碎片、临时备份与无用缓存。
 # 遵循《减法优先》思维定律：无用本身就是删除的充分理由，保留才需要论证。
 
 set -euo pipefail
@@ -11,6 +11,8 @@ SELF_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="."
 MODE="dry-run"
 SHARE_MODE=0
+ENABLE_CACHE=0
+ENABLE_SYSTEM_CACHE=0
 
 usage() {
   cat <<EOF
@@ -20,14 +22,19 @@ usage() {
   --check | --dry-run   只读检查，不动文件（默认）
   --apply | --bury      执行安全入土清理
   --share               只打功德战报与晒单卡片，跳过逐项清单
+  --cache               扫描并清理项目内的临时构建缓存（__pycache__, .turbo, .next 等）
+  --system-cache        清理开发者系统全局依赖纯缓存（npm, pip, go, brew, updater）
+  --deep | --all        全量减法模式（含墓碑、AI 碎片、项目缓存与系统缓存）
   --stats | --ledger    查看累计功德账本（~/.tombstone-ledger.json）
+  -h | --help           显示本帮助
 
 触发对象:
   ⚰️  墓碑技能   SKILL.md frontmatter 自称已废（【已停用】/status: deprecated/…）
-  🗑️  幽灵垃圾   *.bak / *.bak2 / *.update.lock / *~ / *.tmp / *.orig 等临时与备份
+  🤖  AI 幽灵    *.rej (补丁拒绝块) / *.scratch.* / temp_*.py / scratch/ 临时脚本
+  🗑️  幽灵垃圾   *.bak / *.bak2 / *.update.lock / *~ / *.tmp / *.orig / .DS_Store
   📄  草稿碎片   < 100 字节且无 frontmatter 的散落 .md
   🌳  孤立工作树 仅 --apply：HEAD 干净且非主工作树，安全 prune
-  -h | --help           显示本帮助
+  ⚡  构建缓存   项目级构建产物与系统级包管理器纯缓存（需 --cache / --system-cache）
 EOF
 }
 
@@ -36,22 +43,38 @@ for arg in "$@"; do
     --apply|--bury) MODE="apply" ;;
     --dry-run|--check) MODE="dry-run" ;;
     --share) SHARE_MODE=1 ;;
+    --cache) ENABLE_CACHE=1 ;;
+    --system-cache) ENABLE_SYSTEM_CACHE=1 ;;
+    --deep|--all)
+      ENABLE_CACHE=1
+      ENABLE_SYSTEM_CACHE=1
+      ;;
     --stats|--ledger)
       LEDGER="$HOME/.tombstone-ledger.json"
       echo "=================================================="
       echo "📜 🪦 Tombstone Reaper 累计功德账本 (Global Ledger)"
       echo "=================================================="
       if [ -f "$LEDGER" ]; then
-        python3 -c "
+        LEDGER_PATH="$LEDGER" python3 <<'PYEOF'
 import json, os
-d = json.load(open('$LEDGER'))
-print(f'  ⚰️  累计超度墓碑技能: {d.get(\"total_skills\", 0)} 个')
-print(f'  📄 累计清理草稿碎片: {d.get(\"total_drafts\", 0)} 份')
-print(f'  🗑️  累计粉碎幽灵垃圾: {d.get(\"total_garbage\", 0)} 个')
-print(f'  🧠 累计释放上下文: ~{d.get(\"total_tokens\", 0):,} Tokens')
+p = os.environ.get('LEDGER_PATH', '')
+d = json.load(open(p))
+def fmt_b(b):
+    if b >= 1073741824: return f'{b/1073741824:.2f} GB'
+    if b >= 1048576: return f'{b/1048576:.1f} MB'
+    if b >= 1024: return f'{b/1024:.0f} KB'
+    return f'{b} B'
+print(f'  ⚰️  累计超度墓碑技能: {d.get("total_skills", 0)} 个')
+print(f'  🤖 累计粉碎 AI 碎片: {d.get("total_ai", 0)} 份')
+print(f'  📄 累计清理草稿碎片: {d.get("total_drafts", 0)} 份')
+print(f'  🗑️  累计粉碎幽灵垃圾: {d.get("total_garbage", 0)} 个')
+cache_b = d.get("total_cache_bytes", 0)
+if cache_b > 0:
+    print(f'  ⚡ 累计蒸发依赖缓存: {fmt_b(cache_b)}')
+print(f'  🧠 累计释放上下文: ~{d.get("total_tokens", 0):,} Tokens')
 print('--------------------------------------------------')
-print(f'最近一次入土: {d.get(\"last_project\", \"无\")} ({d.get(\"last_burial_time\", \"无\")})')
-"
+print(f'最近一次入土: {d.get("last_project", "无")} ({d.get("last_burial_time", "无")})')
+PYEOF
       else
         echo "  尚无入土记录。运行 ./scripts/reap.sh --bury 开启第一笔功德！"
       fi
@@ -59,7 +82,8 @@ print(f'最近一次入土: {d.get(\"last_project\", \"无\")} ({d.get(\"last_bu
       exit 0
       ;;
     -h|--help) usage; exit 0 ;;
-    *) if [ -d "$arg" ]; then TARGET_DIR="$arg"; else echo "⚠️  忽略未知参数: $arg"; fi ;;
+    --*) echo "❌ 未知选项: $arg"; usage; exit 2 ;;
+    *) if [ -d "$arg" ]; then TARGET_DIR="$arg"; else echo "❌ 未知参数（非目录）: $arg"; usage; exit 2; fi ;;
   esac
 done
 
@@ -76,13 +100,18 @@ if [ "$SHARE_MODE" -eq 0 ]; then
 fi
 
 tombstones=()
+ai_artifacts=()
 garbage_files=()
 empty_drafts=()
+project_caches=()
 
 total_freed_bytes=0
 freed_skills_count=0
+freed_ai_count=0
 freed_drafts_count=0
 freed_garbage_count=0
+freed_cache_bytes=0
+system_cache_freed_bytes=0
 
 # 工具：判断绝对路径是否落在 reaper 自家归档下（避免误伤用户自己的 archive/）
 is_in_self_archive() {
@@ -104,8 +133,21 @@ is_in_self_dir() {
   esac
 }
 
+# 人性化容量格式化
+format_size() {
+  local b="$1"
+  if [ "$b" -ge 1073741824 ]; then
+    awk "BEGIN { printf \"%.2f GB\", $b / 1073741824 }"
+  elif [ "$b" -ge 1048576 ]; then
+    awk "BEGIN { printf \"%.1f MB\", $b / 1048576 }"
+  elif [ "$b" -ge 1024 ]; then
+    awk "BEGIN { printf \"%d KB\", $b / 1024 }"
+  else
+    echo "${b} B"
+  fi
+}
+
 # 工具：把 find 的相对路径解析成绝对路径 + 计算该 skill 单元大小
-# 同目录只算一次（防多 SKILL.md 重复计）
 declare -A _seen_skill_dirs
 
 compute_skill_size() {
@@ -125,13 +167,11 @@ compute_skill_size() {
   if [ "$dir" = "$ROOT_PWD" ]; then
     wc -c < "$abs_file" | tr -d ' '
   else
-    du -sb --exclude=.git --exclude=node_modules --exclude=archive "$dir" 2>/dev/null \
-      | cut -f1 || wc -c < "$abs_file" | tr -d ' '
+    du -sk "$dir" 2>/dev/null | awk '{print $1 * 1024}' || wc -c < "$abs_file" | tr -d ' '
   fi
 }
 
 # 1. 扫描自称已废的墓碑技能 (Tombstone Skills)
-# 判据：前 25 行 frontmatter 含【已停用】/【已废弃】/status: deprecated/该链路整条退役/已停用 YYYY
 while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
   abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
@@ -144,12 +184,28 @@ while IFS= read -r -d '' f; do
   fi
 done < <(find . \
   -name "SKILL.md" \
-  -not -path "*/.*/*" \
+  -not -path "*/.git/*" \
   -not -path "*/node_modules/*" \
   -not -path "*/archive/*" \
   -print0 2>/dev/null || true)
 
-# 2. 扫描临时与备份垃圾 (Garbage / Bak / Lock files)
+# 2. 扫描 AI 幽灵碎片与临时脚手架 (*.rej / *.scratch.* / scratch/ 临时文件 / temp_*.py 等)
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] || continue
+  abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
+  is_in_self_archive "$abs" && continue
+  is_in_self_dir "$abs" && continue
+  ai_artifacts+=("$f")
+  f_size=$(wc -c < "$f" 2>/dev/null | tr -d ' ' || echo 0)
+  total_freed_bytes=$((total_freed_bytes + f_size))
+done < <(find . \
+  -type f \( -name "*.rej" -o -name "*.scratch.*" -o -name "*.scratch" -o -name "temp_*.py" -o -name "tmp_*.sh" -o -name "*.prompt.tmp" -o -path "*/scratch/tmp_*" -o -path "*/scratch/temp_*" \) \
+  -not -path "*/.git/*" \
+  -not -path "*/node_modules/*" \
+  -not -path "*/archive/*" \
+  -print0 2>/dev/null || true)
+
+# 3. 扫描传统临时与备份垃圾 (Garbage / Bak / Lock files)
 while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
   abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
@@ -159,14 +215,13 @@ while IFS= read -r -d '' f; do
   f_size=$(wc -c < "$f" 2>/dev/null | tr -d ' ' || echo 0)
   total_freed_bytes=$((total_freed_bytes + f_size))
 done < <(find . \
-  -type f \( -name "*.bak" -o -name "*.bak2" -o -name "*.update.lock" -o -name "*~" -o -name "*.tmp" -o -name "*.orig" \) \
-  -not -path "*/.*/*" \
+  -type f \( -name "*.bak" -o -name "*.bak2" -o -name "*.update.lock" -o -name "*~" -o -name "*.tmp" -o -name "*.orig" -o -name ".DS_Store" \) \
+  -not -path "*/.git/*" \
   -not -path "*/node_modules/*" \
   -not -path "*/archive/*" \
   -print0 2>/dev/null || true)
 
-# 3. 扫描空草稿碎片 (< 100 字节且没有 frontmatter 的 markdown)
-# 阈值 100 字节 ≈ 30 个 CJK 字符或 100 个 ASCII 字符；过小则判定为未完成草稿
+# 4. 扫描空草稿碎片 (< 100 字节且没有 frontmatter 的 markdown)
 while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
   abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
@@ -182,20 +237,60 @@ while IFS= read -r -d '' f; do
 done < <(find . \
   -maxdepth 3 -name "*.md" \
   -not -name "README.md" \
-  -not -path "*/.*/*" \
+  -not -name "README.en.md" \
+  -not -path "*/.git/*" \
   -not -path "*/node_modules/*" \
   -not -path "*/templates/*" \
   -not -path "*/archive/*" \
   -print0 2>/dev/null || true)
 
+# 5. 扫描项目构建缓存（仅在启用 --cache 时）
+if [ "$ENABLE_CACHE" -eq 1 ]; then
+  while IFS= read -r -d '' d; do
+    [ -d "$d" ] || continue
+    abs="$(cd "$d" && pwd)"
+    is_in_self_archive "$abs" && continue
+    is_in_self_dir "$abs" && continue
+    project_caches+=("$d")
+    d_kb=$(du -sk "$d" 2>/dev/null | awk '{print $1}' || echo 0)
+    freed_cache_bytes=$((freed_cache_bytes + d_kb * 1024))
+  done < <(find . \
+    -type d \( -name "__pycache__" -o -name ".pytest_cache" -o -name ".turbo" -o -name ".next" -o -name ".eslintcache" \) \
+    -not -path "*/.git/*" \
+    -not -path "*/node_modules/*" \
+    -not -path "*/archive/*" \
+    -print0 2>/dev/null || true)
+fi
+
+# 6. 系统全局缓存预估（仅在启用 --system-cache 时）
+if [ "$ENABLE_SYSTEM_CACHE" -eq 1 ]; then
+  for p in "$HOME/.npm/_npx" "$HOME/Library/Caches/go-build" "$HOME/.cache/go-build" "$HOME/Library/Caches/pip" "$HOME/.cache/pip" "$HOME/Library/Caches/Homebrew"; do
+    if [ -d "$p" ]; then
+      p_kb=$(du -sk "$p" 2>/dev/null | awk '{print $1}' || echo 0)
+      system_cache_freed_bytes=$((system_cache_freed_bytes + p_kb * 1024))
+    fi
+  done
+  for up in "$HOME/Library/Caches/"*updater*; do
+    if [ -d "$up" ]; then
+      u_kb=$(du -sk "$up" 2>/dev/null | awk '{print $1}' || echo 0)
+      system_cache_freed_bytes=$((system_cache_freed_bytes + u_kb * 1024))
+    fi
+  done
+fi
+
 freed_skills_count=${#tombstones[@]}
+freed_ai_count=${#ai_artifacts[@]}
 freed_garbage_count=${#garbage_files[@]}
 freed_drafts_count=${#empty_drafts[@]}
-total_items=$((freed_skills_count + freed_garbage_count + freed_drafts_count))
+freed_caches_count=${#project_caches[@]}
+total_items=$((freed_skills_count + freed_ai_count + freed_garbage_count + freed_drafts_count + freed_caches_count))
 
-# 预估 Token 释放量：文本类 1 Token ≈ 3.5 字节（英文 ~4，中文 ~1.5，加权 3.5）
+# 预估 Token 释放量：仅针对文本类死物计算（1 Token ≈ 3.5 字节）
 est_tokens=$(awk "BEGIN { printf \"%d\", $total_freed_bytes / 3.5 }")
 [ -z "$est_tokens" ] && est_tokens=0
+
+# 总计缩减磁盘容量（文本类 + 缓存类）
+grand_total_bytes=$((total_freed_bytes + freed_cache_bytes + system_cache_freed_bytes))
 
 # 孤立 worktree 列表（用于报告与 reap）
 wt_reap_targets=()
@@ -205,11 +300,8 @@ if [ -d .git ] || [ -f .git ]; then
   while IFS= read -r wt; do
     [ -z "$wt" ] && continue
     wt_path="$(echo "$wt" | awk '{print $1}')"
-    wt_branch="$(echo "$wt" | awk '{print $3}' | tr -d '[]')"
-    # 用 cd && pwd 兼容 macOS 上 /tmp → /private/tmp 的符号链接解析差异
     wt_resolved="$(cd "$wt_path" 2>/dev/null && pwd)"
     [ "$wt_resolved" = "$root_resolved" ] && continue
-    # 仅当 worktree 内 HEAD 干净才列入 reap 候选
     if git -C "$wt_path" diff --quiet HEAD 2>/dev/null && \
        git -C "$wt_path" diff --quiet --cached 2>/dev/null; then
       wt_reap_targets+=("$wt_path")
@@ -231,6 +323,14 @@ if [ "$SHARE_MODE" -eq 0 ]; then
     echo "  ✅ 无墓碑技能"
   fi
 
+  if [ "$freed_ai_count" -gt 0 ]; then
+    echo ""
+    echo "🤖 发现【AI 幽灵碎片与临时脚手架】($freed_ai_count 个):"
+    for f in "${ai_artifacts[@]}"; do echo "  - $f"; done
+  else
+    echo "  ✅ 无 AI 幽灵碎片"
+  fi
+
   if [ "$freed_garbage_count" -gt 0 ]; then
     echo ""
     echo "🗑️  发现临时与备份垃圾 ($freed_garbage_count 个):"
@@ -249,13 +349,28 @@ if [ "$SHARE_MODE" -eq 0 ]; then
     echo "  ✅ 无空草稿碎片"
   fi
 
+  if [ "$ENABLE_CACHE" -eq 1 ]; then
+    echo ""
+    if [ "$freed_caches_count" -gt 0 ]; then
+      echo "⚡ 发现项目构建缓存 ($freed_caches_count 个目录, 约 $(format_size "$freed_cache_bytes")):"
+      for d in "${project_caches[@]}"; do echo "  - $d"; done
+    else
+      echo "  ✅ 无项目构建缓存"
+    fi
+  fi
+
+  if [ "$ENABLE_SYSTEM_CACHE" -eq 1 ]; then
+    echo ""
+    echo "🧹 发现系统级包管理纯缓存: 预估可释放 $(format_size "$system_cache_freed_bytes")"
+  fi
+
   # 工作树报告
   if [ -d .git ] || [ -f .git ]; then
     echo ""
     echo "🌳 Git Worktree 状态:"
     if [ "${#wt_reap_targets[@]}" -gt 0 ] || [ "${#wt_skip_targets[@]}" -gt 0 ]; then
       if [ "${#wt_reap_targets[@]}" -gt 0 ]; then
-        echo "  🪓 可安全清理 ($((1 + ${#wt_reap_targets[@]})) 个候选):"
+        echo "  🪓 可安全清理 (${#wt_reap_targets[@]} 个候选):"
         for p in "${wt_reap_targets[@]}"; do echo "    - $p"; done
       fi
       if [ "${#wt_skip_targets[@]}" -gt 0 ]; then
@@ -270,7 +385,7 @@ if [ "$SHARE_MODE" -eq 0 ]; then
   echo "--------------------------------------------------"
 fi
 
-if [ "$total_items" -eq 0 ] && [ "${#wt_reap_targets[@]}" -eq 0 ]; then
+if [ "$total_items" -eq 0 ] && [ "${#wt_reap_targets[@]}" -eq 0 ] && [ "$system_cache_freed_bytes" -eq 0 ]; then
   if [ "$SHARE_MODE" -eq 0 ]; then
     echo "🎉 恭喜！未发现任何死代码与墓碑，项目很干净！"
   fi
@@ -278,18 +393,22 @@ if [ "$total_items" -eq 0 ] && [ "${#wt_reap_targets[@]}" -eq 0 ]; then
 fi
 
 if [ "$MODE" = "dry-run" ]; then
-  # --share 模式也要打预览卡片（让用户预知会晒什么）；否则只打预估收益行
   if [ "$SHARE_MODE" -eq 1 ]; then
     cat <<EOF
 ==================================================
 📜 🪦 墓碑收割·入土功德战报 (Burial Certificate 预览)
 ==================================================
   ⚰️  预估超度墓碑技能: $freed_skills_count 个
+  🤖 预估粉碎 AI 碎片: $freed_ai_count 个
   📄 预估清理草稿碎片: $freed_drafts_count 份
   🗑️  预估粉碎幽灵垃圾: $freed_garbage_count 个文件
   🌳 预估清理孤立工作树: ${#wt_reap_targets[@]} 个
+EOF
+    [ "$ENABLE_CACHE" -eq 1 ] && echo "  ⚡ 预估清除项目缓存: $(format_size "$freed_cache_bytes")"
+    [ "$ENABLE_SYSTEM_CACHE" -eq 1 ] && echo "  🧹 预估清理系统缓存: $(format_size "$system_cache_freed_bytes")"
+    cat <<EOF
   🧠 预估释放上下文记忆: ~$est_tokens Tokens
-  📦 预估缩减磁盘空间: ~$((total_freed_bytes / 1024)) KB
+  📦 预估缩减磁盘空间: ~$(format_size "$grand_total_bytes")
 --------------------------------------------------
 💬 悼词: 版本控制（Git）是它们的永生之地，工作区不是历史陈列馆。
 ==================================================
@@ -297,12 +416,12 @@ if [ "$MODE" = "dry-run" ]; then
 📢 [一键晒单 Markdown 文本（预览），可直接粘贴至 PR 或社交媒体] :
 
 > 🪦 **Tombstone Reaper 减法战报 (预览)**
-> 本次将超度 **$freed_skills_count** 个墓碑技能、**$freed_drafts_count** 份死文档、粉碎 **$freed_garbage_count** 个垃圾文件、清理 **${#wt_reap_targets[@]}** 个孤立工作树！
-> 🧠 预计为 AI Agent 释放 **~$est_tokens** 个上下文 Token，仓库负熵减负！
+> 本次将超度 **$freed_skills_count** 个墓碑技能、**$freed_ai_count** 个 AI 碎片、**$freed_drafts_count** 份死文档、粉碎 **$freed_garbage_count** 个垃圾文件！
+> 🧠 预计为 AI Agent 释放 **~$est_tokens** 个上下文 Token，缩减磁盘占用 **~$(format_size "$grand_total_bytes")**！
 > *"立了墓碑不叫下线，入土为安才叫下线。"*
 EOF
   else
-    echo "💡 预估收益: 释放约 $((total_freed_bytes / 1024)) KB 存储 / 约 $est_tokens 潜在上下文 Token"
+    echo "💡 预估收益: 缩减磁盘约 $(format_size "$grand_total_bytes") / 释放约 $est_tokens 潜在上下文 Token"
     echo "💡 执行入土: 运行 $0 --bury"
   fi
   exit 0
@@ -313,6 +432,11 @@ if [ "$SHARE_MODE" -eq 0 ]; then
   echo ""
   echo "🚀 执行安全入土清理..."
 fi
+
+for f in "${ai_artifacts[@]}"; do
+  rm -f "$f"
+  [ "$SHARE_MODE" -eq 0 ] && echo "  🤖 已粉碎 AI 幽灵碎片: $f"
+done
 
 for f in "${garbage_files[@]}"; do
   rm -f "$f"
@@ -326,8 +450,6 @@ done
 
 for f in "${tombstones[@]}"; do
   dir=$(dirname "$f")
-  # 用完整相对路径做归档子目录名，避免 plugins/auth vs tools/auth 撞名
-  # macOS realpath 不支持 --relative-to，用纯 bash 字符串处理代替
   case "$dir" in
     .) safe_name="$(basename "$ROOT_PWD")" ;;
     ./*) safe_name="${dir#./}"; safe_name="${safe_name//\//__}" ;;
@@ -337,7 +459,6 @@ for f in "${tombstones[@]}"; do
   target="$ARCHIVE_DIR/$safe_name"
   if [ -d "$target" ]; then rm -rf "$target"; fi
 
-  # 在 git 仓库内优先 git mv，保留 rename 历史（与 SKILL.md "git 是永生之地" 一致）
   if git rev-parse --git-dir >/dev/null 2>&1; then
     if ! git mv "$dir" "$target" 2>/dev/null; then
       mv "$dir" "$target"
@@ -347,6 +468,25 @@ for f in "${tombstones[@]}"; do
   fi
   [ "$SHARE_MODE" -eq 0 ] && echo "  ⚰️  已安全归档墓碑技能: $dir → $target"
 done
+
+# 清理项目构建缓存
+if [ "$ENABLE_CACHE" -eq 1 ]; then
+  for d in "${project_caches[@]}"; do
+    rm -rf "$d"
+    [ "$SHARE_MODE" -eq 0 ] && echo "  ⚡ 已清除构建缓存目录: $d"
+  done
+fi
+
+# 清理系统全局纯缓存
+if [ "$ENABLE_SYSTEM_CACHE" -eq 1 ]; then
+  [ "$SHARE_MODE" -eq 0 ] && echo "  🧹 执行系统依赖纯缓存安全清除..."
+  npm cache clean --force >/dev/null 2>&1 || true
+  rm -rf "$HOME/.npm/_npx" 2>/dev/null || true
+  go clean -cache -testcache >/dev/null 2>&1 || true
+  brew cleanup --prune=all >/dev/null 2>&1 || true
+  python3 -m pip cache purge >/dev/null 2>&1 || rm -rf "$HOME/Library/Caches/pip" "$HOME/.cache/pip" 2>/dev/null || true
+  rm -rf "$HOME/Library/Caches/"*updater* 2>/dev/null || true
+fi
 
 # 收割孤立 worktree（仅 HEAD 干净的）
 for p in "${wt_reap_targets[@]}"; do
@@ -360,9 +500,10 @@ done
 # 持久化累加至全局功德簿 (~/.tombstone-ledger.json)
 LEDGER="$HOME/.tombstone-ledger.json"
 if [ ! -f "$LEDGER" ]; then
-  echo '{"total_skills":0,"total_drafts":0,"total_garbage":0,"total_tokens":0}' > "$LEDGER"
+  echo '{"total_skills":0,"total_ai":0,"total_drafts":0,"total_garbage":0,"total_tokens":0,"total_cache_bytes":0}' > "$LEDGER"
 fi
 
+ledger_cache_delta=$((freed_cache_bytes + system_cache_freed_bytes))
 ledger_ok=0
 python3 <<PYEOF 2>>/tmp/reap-ledger.err && ledger_ok=1
 import json
@@ -370,11 +511,13 @@ p = '$LEDGER'
 try:
     d = json.load(open(p))
 except Exception:
-    d = {'total_skills':0,'total_drafts':0,'total_garbage':0,'total_tokens':0}
-d['total_skills'] += $freed_skills_count
-d['total_drafts'] += $freed_drafts_count
-d['total_garbage'] += $freed_garbage_count
-d['total_tokens'] += $est_tokens
+    d = {'total_skills':0,'total_ai':0,'total_drafts':0,'total_garbage':0,'total_tokens':0,'total_cache_bytes':0}
+d['total_skills'] = d.get('total_skills', 0) + $freed_skills_count
+d['total_ai'] = d.get('total_ai', 0) + $freed_ai_count
+d['total_drafts'] = d.get('total_drafts', 0) + $freed_drafts_count
+d['total_garbage'] = d.get('total_garbage', 0) + $freed_garbage_count
+d['total_tokens'] = d.get('total_tokens', 0) + $est_tokens
+d['total_cache_bytes'] = d.get('total_cache_bytes', 0) + $ledger_cache_delta
 d['last_project'] = '$(basename "$ROOT_PWD")'
 import datetime
 d['last_burial_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -387,17 +530,21 @@ fi
 
 # ===== 入土功德战报（bury card） =====
 if [ "$SHARE_MODE" -eq 1 ]; then
-  # 只打卡片，跳过逐项清单
   cat <<EOF
 ==================================================
 📜 🪦 墓碑收割·入土功德战报 (Burial Certificate)
 ==================================================
   ⚰️  超度墓碑技能: $freed_skills_count 个
+  🤖 粉碎 AI 碎片: $freed_ai_count 个
   📄 清理草稿碎片: $freed_drafts_count 份
   🗑️  粉碎幽灵垃圾: $freed_garbage_count 个文件
   🌳 清理孤立工作树: ${#wt_reap_targets[@]} 个
+EOF
+  [ "$ENABLE_CACHE" -eq 1 ] && echo "  ⚡ 清除项目构建缓存: $(format_size "$freed_cache_bytes")"
+  [ "$ENABLE_SYSTEM_CACHE" -eq 1 ] && echo "  🧹 清理系统依赖纯缓存: $(format_size "$system_cache_freed_bytes")"
+  cat <<EOF
   🧠 释放上下文记忆: ~$est_tokens Tokens
-  📦 缩减磁盘空间: ~$((total_freed_bytes / 1024)) KB
+  📦 缩减磁盘空间: ~$(format_size "$grand_total_bytes")
 --------------------------------------------------
 💬 悼词: 版本控制（Git）是它们的永生之地，工作区不是历史陈列馆。
 ==================================================
@@ -408,11 +555,14 @@ else
   echo "📜 🪦 墓碑收割·入土功德战报 (Burial Certificate)"
   echo "=================================================="
   echo "  ⚰️  超度墓碑技能: $freed_skills_count 个"
+  echo "  🤖 粉碎 AI 碎片: $freed_ai_count 个"
   echo "  📄 清理草稿碎片: $freed_drafts_count 份"
   echo "  🗑️  粉碎幽灵垃圾: $freed_garbage_count 个文件"
   echo "  🌳 清理孤立工作树: ${#wt_reap_targets[@]} 个"
+  [ "$ENABLE_CACHE" -eq 1 ] && echo "  ⚡ 清除项目构建缓存: $(format_size "$freed_cache_bytes")"
+  [ "$ENABLE_SYSTEM_CACHE" -eq 1 ] && echo "  🧹 清理系统依赖纯缓存: $(format_size "$system_cache_freed_bytes")"
   echo "  🧠 释放上下文记忆: ~$est_tokens Tokens"
-  echo "  📦 缩减磁盘空间: ~$((total_freed_bytes / 1024)) KB"
+  echo "  📦 缩减磁盘空间: ~$(format_size "$grand_total_bytes")"
   echo "--------------------------------------------------"
   echo "💬 悼词: 版本控制（Git）是它们的永生之地，工作区不是历史陈列馆。"
   echo "=================================================="
@@ -423,7 +573,7 @@ echo ""
 echo "📢 [一键晒单 Markdown 文本，可直接粘贴至 PR 或社交媒体] :"
 echo ""
 echo "> 🪦 **Tombstone Reaper 减法战报**"
-echo "> 本次入土仪式已成功超度 **$freed_skills_count** 个墓碑技能、**$freed_drafts_count** 份死文档、粉碎 **$freed_garbage_count** 个垃圾文件、清理 **${#wt_reap_targets[@]}** 个孤立工作树！"
-echo "> 🧠 累计为 AI Agent 释放 **~$est_tokens** 个上下文 Token，仓库负熵减负！"
-echo "> *"立了墓碑不叫下线，入土为安才叫下线。"*
+echo "> 本次入土仪式已成功超度 **$freed_skills_count** 个墓碑技能、**$freed_ai_count** 个 AI 幽灵碎片、**$freed_drafts_count** 份死文档、粉碎 **$freed_garbage_count** 个垃圾文件！"
+echo "> 🧠 累计为 AI Agent 释放 **~$est_tokens** 个上下文 Token，缩减磁盘占用 **~$(format_size "$grand_total_bytes")**！"
+echo "> *\"立了墓碑不叫下线，入土为安才叫下线。\"*"
 echo ""

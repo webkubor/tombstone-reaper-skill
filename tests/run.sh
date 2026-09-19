@@ -83,6 +83,13 @@ prepare_fixture() {
   rm -rf "$TMP"
   mkdir -p "$TMP"
   cp -R "$FIXTURE_SRC/." "$TMP/"
+  # 动态生成测试用临时文件与垃圾（避免污染 git 仓库状态）
+  echo "leftover" > "$TMP/scripts/leftover.bak"
+  echo "lock" > "$TMP/scripts/old.build.update.lock"
+  echo "dump" > "$TMP/scripts/dump.tmp"
+  echo "broken" > "$TMP/scripts/merge-failed.rej"
+  echo "agent test" > "$TMP/scripts/temp_agent_test.scratch.py"
+  mkdir -p "$TMP/__pycache__" && echo "bytecode" > "$TMP/__pycache__/cache.pyc"
   # 在临时 fixture 里初始化 git（让 archive 用 git mv 也能跑）
   (cd "$TMP" && git init -q && git add -A && git -c user.email=test@x -c user.name=test commit -q -m "fixture" >/dev/null 2>&1) || true
 }
@@ -92,30 +99,36 @@ echo "=================================================="
 echo "🪪 tombstone-reaper-skill test suite"
 echo "=================================================="
 
-# --- T1: --check 能识别墓碑、垃圾、草稿 ---
+# --- T1: --check 能识别墓碑、垃圾、草稿、AI 碎片 ---
 echo ""
 echo "T1 · --check 验尸报告命中正确"
 prepare_fixture
-out=$(cd "$TMP" && bash "$SCRIPT" --check 2>&1)
+out=$(cd "$TMP" && bash "$SCRIPT" --check --cache 2>&1)
 assert_contains "  检出墓碑技能 deprecated-auth" "deprecated-auth/SKILL.md" "$out"
+assert_contains "  检出 AI 幽灵碎片 .rej" ".rej" "$out"
+assert_contains "  检出 AI 幽灵碎片 .scratch.py" ".scratch.py" "$out"
 assert_contains "  检出 .bak 垃圾" ".bak" "$out"
 assert_contains "  检出 .update.lock 垃圾" ".update.lock" "$out"
 assert_contains "  检出 .tmp 垃圾（README/SKILL 声明要扫）" ".tmp" "$out"
 assert_contains "  检出空草稿碎片" "空草稿碎片" "$out"
+assert_contains "  检出项目构建缓存 __pycache__" "__pycache__" "$out"
 assert_not_contains "  不误伤 healthy-payments" "healthy-payments/SKILL.md" "$out"
 assert_not_contains "  不误伤有 frontmatter 的真文档" "real-doc.md" "$out"
 
-# --- T2: --bury 把墓碑归档、垃圾粉碎、草稿清除 ---
+# --- T2: --bury 把墓碑归档、垃圾与 AI 碎片粉碎、草稿清除、缓存删除 ---
 echo ""
 echo "T2 · --bury 执行入土"
 prepare_fixture
-(cd "$TMP" && bash "$SCRIPT" --apply >/dev/null 2>&1)
+(cd "$TMP" && bash "$SCRIPT" --apply --cache >/dev/null 2>&1)
 assert_file_gone "  墓碑技能源目录消失" "$TMP/skills/deprecated-auth"
 assert_file_exists "  墓碑技能归档到 archive/skills/" "$TMP/archive/skills/skills__deprecated-auth/SKILL.md"
+assert_file_gone "  AI 补丁拒绝块 .rej 被粉碎" "$TMP/scripts/merge-failed.rej"
+assert_file_gone "  AI 临时脚本 .scratch.py 被粉碎" "$TMP/scripts/temp_agent_test.scratch.py"
 assert_file_gone "  .bak 被粉碎" "$TMP/scripts/leftover.bak"
 assert_file_gone "  .update.lock 被粉碎" "$TMP/scripts/old.build.update.lock"
 assert_file_gone "  .tmp 被粉碎" "$TMP/scripts/dump.tmp"
 assert_file_gone "  空草稿 .md 被清除" "$TMP/scripts/draft.md"
+assert_file_gone "  __pycache__ 缓存被清除" "$TMP/__pycache__"
 assert_file_exists "  健康技能保留" "$TMP/skills/healthy-payments/SKILL.md"
 assert_file_exists "  有 frontmatter 的真文档保留" "$TMP/note.d/real-doc.md"
 
